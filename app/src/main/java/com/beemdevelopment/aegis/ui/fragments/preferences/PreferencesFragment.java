@@ -1,16 +1,25 @@
 package com.beemdevelopment.aegis.ui.fragments.preferences;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.ViewGroup;
+import android.view.animation.Animation;
 
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.beemdevelopment.aegis.Preferences;
 import com.beemdevelopment.aegis.R;
+import com.beemdevelopment.aegis.database.AuditLogRepository;
+import com.beemdevelopment.aegis.helpers.AnimationsHelper;
 import com.beemdevelopment.aegis.ui.dialogs.Dialogs;
 import com.beemdevelopment.aegis.vault.VaultManager;
 import com.beemdevelopment.aegis.vault.VaultRepositoryException;
@@ -22,16 +31,10 @@ import dagger.hilt.android.AndroidEntryPoint;
 @AndroidEntryPoint
 public abstract class PreferencesFragment extends PreferenceFragmentCompat {
     // activity request codes
-    public static final int CODE_IMPORT_SELECT = 0;
-    public static final int CODE_GROUPS = 3;
-    public static final int CODE_IMPORT = 4;
     public static final int CODE_EXPORT = 5;
     public static final int CODE_EXPORT_PLAIN = 6;
     public static final int CODE_EXPORT_GOOGLE_URI = 7;
     public static final int CODE_EXPORT_HTML = 8;
-    public static final int CODE_BACKUPS = 9;
-
-    private Intent _result;
 
     @Inject
     Preferences _prefs;
@@ -39,11 +42,8 @@ public abstract class PreferencesFragment extends PreferenceFragmentCompat {
     @Inject
     VaultManager _vaultManager;
 
-    @Override
-    @CallSuper
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
-        setResult(new Intent());
-    }
+    @Inject
+    protected AuditLogRepository _auditLogRepository;
 
     @Override
     @CallSuper
@@ -58,13 +58,31 @@ public abstract class PreferencesFragment extends PreferenceFragmentCompat {
         }
     }
 
-    public Intent getResult() {
-        return _result;
+    @Override
+    @Nullable
+    public Animation onCreateAnimation(int transit, boolean enter, int nextAnim) {
+        if (nextAnim != 0) {
+            return AnimationsHelper.loadScaledAnimation(requireContext(), nextAnim, AnimationsHelper.Scale.TRANSITION);
+        }
+
+        return super.onCreateAnimation(transit, enter, nextAnim);
     }
 
-    public void setResult(Intent result) {
-        _result = result;
-        requireActivity().setResult(Activity.RESULT_OK, _result);
+    @NonNull
+    @Override
+    public RecyclerView onCreateRecyclerView(@NonNull LayoutInflater inflater, @NonNull ViewGroup parent, @Nullable Bundle savedInstanceState) {
+        RecyclerView recyclerView = super.onCreateRecyclerView(inflater, parent, savedInstanceState);
+        ViewCompat.setOnApplyWindowInsetsListener(recyclerView, (targetView, windowInsets) -> {
+            Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            targetView.setPadding(
+                    0,
+                    0,
+                    0,
+                    insets.bottom
+            );
+            return WindowInsetsCompat.CONSUMED;
+        });
+        return recyclerView;
     }
 
     protected boolean saveAndBackupVault() {

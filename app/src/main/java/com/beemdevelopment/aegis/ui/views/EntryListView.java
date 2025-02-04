@@ -3,57 +3,63 @@ package com.beemdevelopment.aegis.ui.views;
 import static androidx.recyclerview.widget.RecyclerView.NO_POSITION;
 
 import android.annotation.SuppressLint;
+import android.content.res.TypedArray;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.AnimationUtils;
 import android.view.animation.LayoutAnimationController;
-import android.widget.Button;
 import android.widget.LinearLayout;
 
+import androidx.annotation.AttrRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.StyleRes;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.fragment.app.Fragment;
-import androidx.recyclerview.widget.DividerItemDecoration;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.beemdevelopment.aegis.AccountNamePosition;
+import com.beemdevelopment.aegis.CopyBehavior;
 import com.beemdevelopment.aegis.Preferences;
 import com.beemdevelopment.aegis.R;
 import com.beemdevelopment.aegis.SortCategory;
 import com.beemdevelopment.aegis.ViewMode;
+import com.beemdevelopment.aegis.helpers.AnimationsHelper;
 import com.beemdevelopment.aegis.helpers.MetricsHelper;
 import com.beemdevelopment.aegis.helpers.SimpleItemTouchHelperCallback;
-import com.beemdevelopment.aegis.helpers.ThemeHelper;
 import com.beemdevelopment.aegis.helpers.UiRefresher;
 import com.beemdevelopment.aegis.otp.TotpInfo;
-import com.beemdevelopment.aegis.ui.dialogs.Dialogs;
-import com.beemdevelopment.aegis.ui.glide.IconLoader;
+import com.beemdevelopment.aegis.ui.glide.GlideHelper;
+import com.beemdevelopment.aegis.ui.models.ErrorCardInfo;
 import com.beemdevelopment.aegis.vault.VaultEntry;
+import com.beemdevelopment.aegis.vault.VaultGroup;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.ListPreloader;
 import com.bumptech.glide.RequestBuilder;
 import com.bumptech.glide.integration.recyclerview.RecyclerViewPreloader;
-import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.util.ViewPreloadSizeProvider;
-import com.google.android.material.bottomsheet.BottomSheetDialog;
-import com.google.android.material.chip.Chip;
-import com.google.android.material.chip.ChipGroup;
-import com.google.android.material.divider.MaterialDividerItemDecoration;
+import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.shape.CornerFamily;
+import com.google.android.material.shape.ShapeAppearanceModel;
 import com.google.common.base.Strings;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
+import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 public class EntryListView extends Fragment implements EntryAdapter.Listener {
     private EntryAdapter _adapter;
@@ -62,16 +68,13 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
     private ItemTouchHelper _touchHelper;
 
     private RecyclerView _recyclerView;
-    private RecyclerView.ItemDecoration _dividerDecoration;
+    private RecyclerView.ItemDecoration _itemDecoration;
     private ViewPreloadSizeProvider<VaultEntry> _preloadSizeProvider;
     private TotpProgressBar _progressBar;
     private boolean _showProgress;
+    private boolean _showExpirationState;
     private ViewMode _viewMode;
-    private TreeSet<String> _groups;
     private LinearLayout _emptyStateView;
-    private Chip _groupChip;
-    private List<String> _groupFilter;
-    private List<String> _prefGroupFilter;
 
     private UiRefresher _refresher;
 
@@ -92,8 +95,6 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_entry_list_view, container, false);
         _progressBar = view.findViewById(R.id.progressBar);
-        _groupChip = view.findViewById(R.id.chip_group);
-        initializeGroupChip();
 
         // set up the recycler view
         _recyclerView = view.findViewById(R.id.rvKeyProfiles);
@@ -120,16 +121,24 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         RecyclerViewPreloader<VaultEntry> preloader = new RecyclerViewPreloader<>(Glide.with(this), modelProvider, _preloadSizeProvider, 10);
         _recyclerView.addOnScrollListener(preloader);
 
-        LinearLayoutManager layoutManager = new LinearLayoutManager(requireContext());
+        GridLayoutManager layoutManager = new GridLayoutManager(requireContext(), 1);
+        layoutManager.setSpanSizeLookup(new GridLayoutManager.SpanSizeLookup() {
+            @Override
+            public int getSpanSize(int position) {
+                if (_viewMode == ViewMode.TILES
+                        && (_adapter.isPositionFooter(position)
+                        || _adapter.isPositionErrorCard(position))) {
+                    return 2;
+                }
+
+                return 1;
+            }
+        });
         _recyclerView.setLayoutManager(layoutManager);
         _touchCallback = new SimpleItemTouchHelperCallback(_adapter);
         _touchHelper = new ItemTouchHelper(_touchCallback);
         _touchHelper.attachToRecyclerView(_recyclerView);
         _recyclerView.setAdapter(_adapter);
-
-        int resId = R.anim.layout_animation_fall_down;
-        LayoutAnimationController animation = AnimationUtils.loadLayoutAnimation(requireContext(), resId);
-        _recyclerView.setLayoutAnimation(animation);
 
         _refresher = new UiRefresher(new UiRefresher.Listener() {
             @Override
@@ -143,6 +152,23 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
             }
         });
 
+        final int rvInitialPaddingLeft = _recyclerView.getPaddingLeft();
+        final int rvInitialPaddingTop = _recyclerView.getPaddingTop();
+        final int rvInitialPaddingRight = _recyclerView.getPaddingRight();
+        final int rvInitialPaddingBottom = _recyclerView.getPaddingBottom();
+
+        ViewCompat.setOnApplyWindowInsetsListener(_recyclerView, (targetView, windowInsets) -> {
+            Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            // left and right padding seems to be handled by fitsSystemWindows="true" on the CoordinatorLayout in activity_main.xml
+            targetView.setPadding(
+                    rvInitialPaddingLeft,
+                    rvInitialPaddingTop,
+                    rvInitialPaddingRight,
+                    rvInitialPaddingBottom + insets.bottom
+            );
+            return WindowInsetsCompat.CONSUMED;
+        });
+
         _emptyStateView = view.findViewById(R.id.vEmptyList);
         return view;
     }
@@ -151,30 +177,45 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         _preloadSizeProvider.setView(view);
     }
 
+    public int getScrollPosition() {
+        return ((LinearLayoutManager) _recyclerView.getLayoutManager()).findFirstVisibleItemPosition();
+    }
+
+    public void scrollToPosition(int position) {
+        _recyclerView.getLayoutManager().scrollToPosition(position);
+    }
+
     @Override
     public void onDestroyView() {
         _refresher.destroy();
         super.onDestroyView();
     }
 
-    public void setGroupFilter(List<String> groups, boolean animate) {
-        _groupFilter = groups;
+    public void setGroups(Collection<VaultGroup> groups) {
+        _adapter.setGroups(groups);
+        updateDividerDecoration();
+    }
+
+    public void setGroupFilter(Set<UUID> groups) {
         _adapter.setGroupFilter(groups);
         _touchCallback.setIsLongPressDragEnabled(_adapter.isDragAndDropAllowed());
         updateEmptyState();
-        updateGroupChip();
-
-        if (animate) {
-            runEntriesAnimation();
-        }
     }
 
     public void setIsLongPressDragEnabled(boolean enabled) {
         _touchCallback.setIsLongPressDragEnabled(enabled && _adapter.isDragAndDropAllowed());
     }
 
-    public void setIsCopyOnTapEnabled(boolean enabled) {
-       _adapter.setIsCopyOnTapEnabled(enabled);
+    public void setCopyBehavior(CopyBehavior copyBehavior) {
+        _adapter.setCopyBehavior(copyBehavior);
+    }
+
+    public void setSearchBehaviorMask(int searchBehaviorMask) {
+        _adapter.setSearchBehaviorMask(searchBehaviorMask);
+    }
+
+    public List<VaultEntry> selectAllEntries() {
+        return _adapter.selectAllEntries();
     }
 
     public void setActionModeState(boolean enabled, VaultEntry entry) {
@@ -191,10 +232,6 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
     public void setSortCategory(SortCategory sortCategory, boolean apply) {
         _adapter.setSortCategory(sortCategory, apply);
         _touchCallback.setIsLongPressDragEnabled(_adapter.isDragAndDropAllowed());
-
-        if (apply) {
-            runEntriesAnimation();
-        }
     }
 
     public void setUsageCounts(Map<UUID, Integer> usageCounts) {
@@ -203,6 +240,14 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
 
     public Map<UUID, Integer> getUsageCounts() {
         return _adapter.getUsageCounts();
+    }
+
+    public void setLastUsedTimestamps(Map<UUID, Long> lastUsedTimestamps) {
+        _adapter.setLastUsedTimestamps(lastUsedTimestamps);
+    }
+
+    public Map<UUID, Long> getLastUsedTimestamps() {
+        return  _adapter.getLastUsedTimestamps();
     }
 
     public void setSearchFilter(String search) {
@@ -220,6 +265,13 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         _viewMode = mode;
         updateDividerDecoration();
         _adapter.setViewMode(_viewMode);
+        if (_viewMode == ViewMode.TILES) {
+            _touchCallback.setDragFlags(ItemTouchHelper.UP | ItemTouchHelper.DOWN | ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT);
+        } else {
+            _touchCallback.setDragFlags(ItemTouchHelper.UP | ItemTouchHelper.DOWN);
+        }
+
+        ((GridLayoutManager)_recyclerView.getLayoutManager()).setSpanCount(mode.getSpanCount());
     }
 
     public void startDrag(RecyclerView.ViewHolder viewHolder) {
@@ -316,20 +368,29 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         }
     }
 
-    public void setPrefGroupFilter(List<String> groupFilter) {
-        _prefGroupFilter = groupFilter;
-    }
-
     public void setCodeGroupSize(Preferences.CodeGrouping codeGrouping) {
         _adapter.setCodeGroupSize(codeGrouping);
     }
 
-    public void setShowAccountName(boolean showAccountName) {
-        _adapter.setShowAccountName(showAccountName);
+    public void setAccountNamePosition(AccountNamePosition accountNamePosition) {
+        _adapter.setAccountNamePosition(accountNamePosition);
+    }
+
+    public void setOnlyShowNecessaryAccountNames(boolean onlyShowNecessaryAccountNames) {
+        _adapter.setOnlyShowNecessaryAccountNames(onlyShowNecessaryAccountNames);
     }
 
     public void setShowIcon(boolean showIcon) {
         _adapter.setShowIcon(showIcon);
+    }
+
+    public void setShowNextCode(boolean showNextCode) {
+        _adapter.setShowNextCode(showNextCode);
+    }
+
+    public void setShowExpirationState(boolean showExpirationState) {
+        _showExpirationState = showExpirationState;
+        _adapter.setShowExpirationState(showExpirationState);
     }
 
     public void setHighlightEntry(boolean highlightEntry) {
@@ -348,43 +409,61 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         _adapter.setTapToRevealTime(number);
     }
 
-    public void addEntry(VaultEntry entry) {
-        addEntry(entry, false);
+    public void setErrorCardInfo(ErrorCardInfo info) {
+        _adapter.setErrorCardInfo(info);
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    public void addEntry(VaultEntry entry, boolean focusEntry) {
-        int position = _adapter.addEntry(entry);
-        updateEmptyState();
+    public void onEntryAdded(VaultEntry entry) {
+        int position = _adapter.getEntryPosition(entry);
+        if (position < 0) {
+            return;
+        }
 
         LinearLayoutManager layoutManager = (LinearLayoutManager) _recyclerView.getLayoutManager();
-        if (focusEntry && position >= 0) {
-            if ((_recyclerView.canScrollVertically(1) && position > layoutManager.findLastCompletelyVisibleItemPosition())
-                    || (_recyclerView.canScrollVertically(-1) && position < layoutManager.findFirstCompletelyVisibleItemPosition())) {
-                RecyclerView.OnScrollListener scrollListener = new RecyclerView.OnScrollListener() {
-                    @Override
-                    public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
-                        if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                            _recyclerView.removeOnScrollListener(this);
-                            _recyclerView.setOnTouchListener(null);
-                            tempHighlightEntry(entry);
-                        }
-                    }
-                };
-                _recyclerView.addOnScrollListener(scrollListener);
-                _recyclerView.setOnTouchListener((v, event) -> {
-                    if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                        _recyclerView.removeOnScrollListener(scrollListener);
-                        _recyclerView.stopScroll();
-                        _recyclerView.setOnTouchListener(null);
-                    }
+        if ((_recyclerView.canScrollVertically(1) && position > layoutManager.findLastCompletelyVisibleItemPosition())
+                || (_recyclerView.canScrollVertically(-1) && position < layoutManager.findFirstCompletelyVisibleItemPosition())) {
+            boolean smoothScroll = !AnimationsHelper.Scale.TRANSITION.isZero(requireContext());
+            RecyclerView.OnScrollListener scrollListener = new RecyclerView.OnScrollListener() {
+                private void handleScroll() {
+                    _recyclerView.removeOnScrollListener(this);
+                    _recyclerView.setOnTouchListener(null);
+                    tempHighlightEntry(entry);
+                }
 
-                    return false;
-                });
+                @Override
+                public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                    if (smoothScroll && newState == RecyclerView.SCROLL_STATE_IDLE) {
+                        handleScroll();
+                    }
+                }
+
+                @Override
+                public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                    if (!smoothScroll) {
+                        handleScroll();
+                    }
+                }
+            };
+            _recyclerView.addOnScrollListener(scrollListener);
+            _recyclerView.setOnTouchListener((v, event) -> {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    _recyclerView.removeOnScrollListener(scrollListener);
+                    _recyclerView.stopScroll();
+                    _recyclerView.setOnTouchListener(null);
+                }
+
+                return false;
+            });
+            // We can't easily control the speed of the smooth scroll animation, but we
+            // can at least disable it if animations are disabled
+            if (smoothScroll) {
                 _recyclerView.smoothScrollToPosition(position);
             } else {
-                tempHighlightEntry(entry);
+                _recyclerView.scrollToPosition(position);
             }
+        } else {
+            tempHighlightEntry(entry);
         }
     }
 
@@ -395,108 +474,21 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         _adapter.focusEntry(entry, secondsToFocus);
     }
 
-    public void addEntries(Collection<VaultEntry> entries) {
-        _adapter.addEntries(entries);
-        updateEmptyState();
-    }
-
-    public void removeEntry(VaultEntry entry) {
-        _adapter.removeEntry(entry);
-        updateEmptyState();
-    }
-
-    public void removeEntry(UUID uuid) {
-        _adapter.removeEntry(uuid);
+    public void setEntries(Collection<VaultEntry> entries) {
+        _adapter.setEntries(new ArrayList<>(entries));
         updateEmptyState();
     }
 
     public void clearEntries() {
         _adapter.clearEntries();
-    }
-
-    public void replaceEntry(UUID uuid, VaultEntry newEntry) {
-        _adapter.replaceEntry(uuid, newEntry);
+        updateEmptyState();
     }
 
     public void runEntriesAnimation() {
-        final LayoutAnimationController controller =
-                AnimationUtils.loadLayoutAnimation(requireContext(), R.anim.layout_animation_fall_down);
+        LayoutAnimationController animationController = AnimationsHelper.loadScaledLayoutAnimation(requireContext(), R.anim.layout_animation_fall_down);
 
-        _recyclerView.setLayoutAnimation(controller);
+        _recyclerView.setLayoutAnimation(animationController);
         _recyclerView.scheduleLayoutAnimation();
-    }
-
-    private void addChipTo(ChipGroup chipGroup, String group) {
-        Chip chip = (Chip) getLayoutInflater().inflate(R.layout.chip_material, null, false);
-        chip.setText(group == null ? getString(R.string.no_group) : group);
-        chip.setCheckable(true);
-        chip.setChecked(_groupFilter != null && _groupFilter.contains(group));
-        chip.setCheckedIconVisible(true);
-        chip.setOnCheckedChangeListener((group1, checkedId) -> {
-            List<String> groupFilter = getGroupFilter(chipGroup);
-            setGroupFilter(groupFilter, true);
-        });
-        chip.setTag(group == null ? new Object() : null);
-        chipGroup.addView(chip);
-    }
-
-    private void initializeGroupChip() {
-        View view = getLayoutInflater().inflate(R.layout.dialog_select_groups, null);
-        BottomSheetDialog dialog = new BottomSheetDialog(requireContext());
-        dialog.setContentView(view);
-
-        ChipGroup chipGroup = view.findViewById(R.id.groupChipGroup);
-        Button clearButton = view.findViewById(R.id.btnClear);
-        Button saveButton = view.findViewById(R.id.btnSave);
-        clearButton.setOnClickListener(v -> {
-            chipGroup.clearCheck();
-            List<String> groupFilter = Collections.emptyList();
-            if (_listener != null) {
-                _listener.onSaveGroupFilter(groupFilter);
-            }
-            setGroupFilter(groupFilter, true);
-            dialog.dismiss();
-        });
-
-        saveButton.setOnClickListener(v -> {
-            List<String> groupFilter = getGroupFilter(chipGroup);
-            if (_listener != null) {
-                _listener.onSaveGroupFilter(groupFilter);
-            }
-            setGroupFilter(groupFilter, true);
-            dialog.dismiss();
-        });
-
-        _groupChip.setOnClickListener(v -> {
-            chipGroup.removeAllViews();
-
-            for (String group : _groups) {
-                addChipTo(chipGroup, group);
-            }
-            addChipTo(chipGroup, null);
-
-            Dialogs.showSecureDialog(dialog);
-        });
-    }
-
-    private static List<String> getGroupFilter(ChipGroup chipGroup) {
-        return chipGroup.getCheckedChipIds().stream()
-                .map(i -> {
-                    Chip chip = chipGroup.findViewById(i);
-                    if (chip.getTag() != null) {
-                        return null;
-                    }
-                    return chip. getText().toString();
-                })
-                .collect(Collectors.toList());
-    }
-
-    private void updateGroupChip() {
-        if (_groupFilter.isEmpty()) {
-            _groupChip.setText(R.string.groups);
-        } else {
-            _groupChip.setText(String.format("%s (%d)", getString(R.string.groups), _groupFilter.size()));
-        }
     }
 
     private void setShowProgress(boolean showProgress) {
@@ -504,48 +496,23 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         updateDividerDecoration();
     }
 
-    public void setGroups(TreeSet<String> groups) {
-        _groups = groups;
-        _groupChip.setVisibility(_groups.isEmpty() ? View.GONE : View.VISIBLE);
-        updateDividerDecoration();
-
-        if (_prefGroupFilter != null) {
-            List<String> groupFilter = cleanGroupFilter(_prefGroupFilter);
-            _prefGroupFilter = null;
-            if (!groupFilter.isEmpty()) {
-                setGroupFilter(groupFilter, false);
-            }
-        } else if (_groupFilter != null) {
-            List<String> groupFilter = cleanGroupFilter(_groupFilter);
-            if (!_groupFilter.equals(groupFilter)) {
-                setGroupFilter(groupFilter, true);
-            }
-        }
-    }
-
-    private List<String> cleanGroupFilter(List<String> groupFilter) {
-       return groupFilter.stream()
-                .filter(g -> g == null || _groups.contains(g))
-                .collect(Collectors.toList());
-    }
-
     private void updateDividerDecoration() {
-        if (_dividerDecoration != null) {
-            _recyclerView.removeItemDecoration(_dividerDecoration);
+        if (_itemDecoration != null) {
+            _recyclerView.removeItemDecoration(_itemDecoration);
         }
 
-        float height = _viewMode.getDividerHeight();
-        if (_showProgress && height == 0) {
-            _dividerDecoration = new CompactDividerDecoration();
+        float offset = _viewMode.getItemOffset();
+        if (_viewMode == ViewMode.TILES) {
+            _itemDecoration = new TileSpaceItemDecoration(offset);
         } else {
-            _dividerDecoration = new VerticalSpaceItemDecoration(height);
+            _itemDecoration = new VerticalSpaceItemDecoration(offset);
         }
 
-        _recyclerView.addItemDecoration(_dividerDecoration);
+        _recyclerView.addItemDecoration(_itemDecoration);
     }
 
     private void updateEmptyState() {
-        if (_adapter.getEntriesCount() > 0) {
+        if (_adapter.getShownEntriesCount() > 0) {
             _recyclerView.setVisibility(View.VISIBLE);
             _emptyStateView.setVisibility(View.GONE);
         } else {
@@ -567,37 +534,22 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
         void onSelect(VaultEntry entry);
         void onDeselect(VaultEntry entry);
         void onListChange();
-        void onSaveGroupFilter(List<String> groupFilter);
+        void onSaveGroupFilter(Set<UUID> groupFilter);
         void onEntryListTouch();
     }
 
-    private class CompactDividerDecoration extends MaterialDividerItemDecoration {
-        public CompactDividerDecoration() {
-            super(requireContext(), DividerItemDecoration.VERTICAL);
-            setDividerColor(ThemeHelper.getThemeColor(R.attr.divider, requireContext().getTheme()));
-            setLastItemDecorated(false);
-            setDividerThickness(MetricsHelper.convertDpToPixels(requireContext(), 0.5f));
-        }
-
-        @Override
-        public void getItemOffsets(@NonNull Rect outRect, @NonNull View view, @NonNull RecyclerView parent, @NonNull RecyclerView.State state) {
-            if (_adapter.isPositionFooter(parent.getChildAdapterPosition(view))) {
-                int pixels = MetricsHelper.convertDpToPixels(requireContext(), 20);
-                outRect.top = pixels;
-                outRect.bottom = pixels;
-                return;
-            }
-
-            super.getItemOffsets(outRect, view, parent, state);
-        }
-    }
-
     private class VerticalSpaceItemDecoration extends RecyclerView.ItemDecoration {
-        private final int _height;
+        private final int _offset;
+        private final ShapeAppearanceModel _defaultShapeModel;
 
-        private VerticalSpaceItemDecoration(float dp) {
-            // convert dp to pixels
-            _height = MetricsHelper.convertDpToPixels(requireContext(), dp);
+        private VerticalSpaceItemDecoration(float offset) {
+            _offset = MetricsHelper.convertDpToPixels(requireContext(), offset);
+
+            int shapeAppearanceId = getStyledAttrs(R.style.Widget_Aegis_EntryCardView,
+                    com.google.android.material.R.attr.shapeAppearance);
+
+            _defaultShapeModel = ShapeAppearanceModel.builder(
+                    requireContext(), shapeAppearanceId, 0).build();
         }
 
         @Override
@@ -607,43 +559,105 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
                 return;
             }
 
-            // The footer always has a top and bottom margin
+            // The error card and the footer always have a top and bottom margin
+            if (_adapter.isPositionErrorCard(adapterPosition)) {
+                outRect.top = _viewMode == ViewMode.COMPACT ? _offset * 4 : _offset;
+                outRect.bottom = _offset;
+                return;
+            }
             if (_adapter.isPositionFooter(adapterPosition)) {
-                outRect.top = _height;
-                outRect.bottom = _height;
+                outRect.top = _offset * 2;
+                outRect.bottom = _offset;
                 return;
             }
 
-            // The first entry should have a top margin, but only if the group chip is not shown
-            if (adapterPosition == 0 && (_groups == null || _groups.isEmpty())) {
-                outRect.top = _height;
+            int entryIndex = _adapter.translateEntryPosToIndex(adapterPosition);
+            // The first entry should have a top margin, but only if the error card is not shown
+            if (entryIndex == 0 && !_adapter.isErrorCardShown()) {
+                outRect.top = _offset;
             }
 
             // Only non-favorite entries have a bottom margin, except for the final favorite entry
             int totalFavorites = _adapter.getShownFavoritesCount();
             if (totalFavorites == 0
-                    || (adapterPosition < _adapter.getEntriesCount() && !_adapter.getEntryAt(adapterPosition).isFavorite())
-                    || totalFavorites == adapterPosition + 1) {
-                outRect.bottom = _height;
-            }
-
-            if (totalFavorites > 0) {
-                // If this entry is the last favorite entry in the list, it should always have
-                // a bottom margin, regardless of the view mode
-                if (adapterPosition == totalFavorites - 1) {
-                    outRect.bottom = _height;
-                }
-
-                // If this is the first non-favorite entry, it should have a top margin
-                if (adapterPosition == totalFavorites) {
-                    outRect.top = _height;
-                }
+                    || (entryIndex < _adapter.getShownEntriesCount() && !_adapter.getEntryAtPosition(adapterPosition).isFavorite())
+                    || totalFavorites == entryIndex + 1) {
+                outRect.bottom = _offset;
             }
 
             // The last entry should never have a bottom margin
-            if (_adapter.getEntriesCount() == adapterPosition + 1) {
+            if (_adapter.getShownEntriesCount() == entryIndex + 1) {
                 outRect.bottom = 0;
             }
+
+            decorateFavoriteEntries((MaterialCardView) view, parent);
+        }
+
+        private void decorateFavoriteEntries(@NonNull MaterialCardView view, @NonNull RecyclerView parent) {
+            int adapterPosition = parent.getChildAdapterPosition(view);
+            int entryIndex = _adapter.translateEntryPosToIndex(adapterPosition);
+            int totalFavorites = _adapter.getShownFavoritesCount();
+
+            ShapeAppearanceModel.Builder builder = _defaultShapeModel.toBuilder();
+            if (entryIndex < totalFavorites) {
+                if ((entryIndex == 0 && totalFavorites > 1) || (entryIndex < (totalFavorites - 1))) {
+                    builder.setBottomLeftCorner(CornerFamily.ROUNDED, 0);
+                    builder.setBottomRightCorner(CornerFamily.ROUNDED, 0);
+                }
+                if (entryIndex > 0) {
+                    builder.setTopLeftCorner(CornerFamily.ROUNDED, 0);
+                    builder.setTopRightCorner(CornerFamily.ROUNDED, 0);
+                }
+            }
+
+            view.setShapeAppearanceModel(builder.build());
+            view.setClipToOutline(true);
+        }
+
+        private int getStyledAttrs(@StyleRes int styleId, @AttrRes int attrId) {
+            TypedArray cardAttrs = null;
+            try {
+                cardAttrs = requireContext().obtainStyledAttributes(styleId, new int[]{attrId});
+                TypedValue value = new TypedValue();
+                cardAttrs.getValue(0, value);
+                return value.data;
+            } finally {
+                if (cardAttrs != null) {
+                    cardAttrs.recycle();
+                }
+            }
+        }
+    }
+
+    private class TileSpaceItemDecoration extends RecyclerView.ItemDecoration {
+        private final int _offset;
+
+        private TileSpaceItemDecoration(float offset) {
+            _offset = MetricsHelper.convertDpToPixels(requireContext(), offset);
+        }
+
+        @Override
+        public void getItemOffsets(@NonNull Rect outRect, @NonNull View view, @NonNull RecyclerView parent, @NonNull RecyclerView.State state) {
+            int adapterPosition = parent.getChildAdapterPosition(view);
+            if (adapterPosition == NO_POSITION) {
+                return;
+            }
+
+            outRect.left = _offset;
+            outRect.right = _offset;
+            outRect.top = _offset;
+            outRect.bottom = _offset;
+
+            if (_adapter.isPositionErrorCard(adapterPosition)
+                    || (isInFirstEntryRow(adapterPosition) && !_adapter.isErrorCardShown())
+                    || _adapter.isPositionFooter(adapterPosition)) {
+                outRect.top *= 2;
+            }
+        }
+
+        private boolean isInFirstEntryRow(int pos) {
+            int index = _adapter.translateEntryPosToIndex(pos);
+            return index >= 0 && index < _viewMode.getSpanCount();
         }
     }
 
@@ -655,22 +669,24 @@ public class EntryListView extends Fragment implements EntryAdapter.Listener {
                 return Collections.emptyList();
             }
 
-            VaultEntry entry = _adapter.getEntryAt(position);
+            if (_adapter.getItemViewType(position) == R.layout.card_error) {
+                return Collections.emptyList();
+            }
+
+            VaultEntry entry = _adapter.getEntryAtPosition(position);
             if (!entry.hasIcon()) {
                 return Collections.emptyList();
             }
+
             return Collections.singletonList(entry);
         }
 
         @Nullable
         @Override
         public RequestBuilder<Drawable> getPreloadRequestBuilder(@NonNull VaultEntry entry) {
-            return Glide.with(EntryListView.this)
-                        .asDrawable()
-                        .load(entry)
-                        .set(IconLoader.ICON_TYPE, entry.getIconType())
-                        .diskCacheStrategy(DiskCacheStrategy.NONE)
-                        .skipMemoryCache(false);
+            RequestBuilder<Drawable> rb = Glide.with(EntryListView.this)
+                    .load(entry.getIcon());
+            return GlideHelper.setCommonOptions(rb, entry.getIcon().getType());
         }
     }
 }

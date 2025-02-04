@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 import androidx.core.util.AtomicFile;
 
 import com.beemdevelopment.aegis.otp.GoogleAuthInfo;
+import com.beemdevelopment.aegis.util.Cloner;
 import com.beemdevelopment.aegis.util.IOUtils;
 import com.google.zxing.WriterException;
 
@@ -20,9 +21,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.text.Collator;
 import java.util.Collection;
-import java.util.TreeSet;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -220,7 +221,13 @@ public class VaultRepository {
     }
 
     public void addEntry(VaultEntry entry) {
+        // Entries added by importing a file may contain an old group that needs to be migrated
+        _vault.migrateOldGroup(entry);
         _vault.getEntries().add(entry);
+    }
+
+    public boolean hasEntryByUUID(UUID uuid) {
+        return _vault.getEntries().has(uuid);
     }
 
     public VaultEntry getEntryByUUID(UUID uuid) {
@@ -231,16 +238,30 @@ public class VaultRepository {
         return _vault.getEntries().remove(entry);
     }
 
-    public void wipeEntries() {
+    /**
+     * Wipes all entries and groups from the vault.
+     */
+    public void wipeContents() {
         _vault.getEntries().wipe();
+        _vault.getGroups().wipe();
     }
 
     public VaultEntry replaceEntry(VaultEntry entry) {
         return _vault.getEntries().replace(entry);
     }
 
-    public void swapEntries(VaultEntry entry1, VaultEntry entry2) {
-        _vault.getEntries().swap(entry1, entry2);
+    public VaultEntry editEntry(VaultEntry entry, EntryEditor editor) {
+        VaultEntry newEntry = Cloner.clone(entry);
+        editor.edit(newEntry);
+        replaceEntry(newEntry);
+        return newEntry;
+    }
+
+    /**
+     * Moves entry1 to the position of entry2.
+     */
+    public void moveEntry(VaultEntry entry1, VaultEntry entry2) {
+        _vault.getEntries().move(entry1, entry2);
     }
 
     public boolean isEntryDuplicate(VaultEntry entry) {
@@ -251,15 +272,73 @@ public class VaultRepository {
         return _vault.getEntries().getValues();
     }
 
-    public TreeSet<String> getGroups() {
-        TreeSet<String> groups = new TreeSet<>(Collator.getInstance());
-        for (VaultEntry entry : getEntries()) {
-            String group = entry.getGroup();
-            if (group != null) {
-                groups.add(group);
-            }
+    public void addGroup(VaultGroup group) {
+        _vault.getGroups().add(group);
+    }
+
+    public VaultGroup getGroupByUUID(UUID uuid) {
+        return _vault.getGroups().getByUUID(uuid);
+    }
+
+    @Nullable
+    public VaultGroup findGroupByUUID(UUID uuid) {
+        return _vault.getGroups().has(uuid) ? _vault.getGroups().getByUUID(uuid) : null;
+    }
+
+    @Nullable
+    public VaultGroup findGroupByName(String name) {
+        return _vault.getGroups().getValues()
+                .stream()
+                .filter(g -> g.getName().equals(name))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public void removeGroup(UUID groupUuid) {
+        VaultGroup group = _vault.getGroups().getByUUID(groupUuid);
+        removeGroup(group);
+    }
+
+    public void replaceGroups(Collection<VaultGroup> groups) {
+        _vault.getGroups().wipe();
+        for (VaultGroup group : groups) {
+            _vault.getGroups().add(group);
         }
-        return groups;
+    }
+
+    public void removeGroup(VaultGroup group) {
+        for (VaultEntry entry : getEntries()) {
+            entry.removeGroup(group.getUUID());
+        }
+
+        _vault.getGroups().remove(group);
+    }
+
+    public Collection<VaultGroup> getGroups() {
+        return _vault.getGroups().getValues();
+    }
+
+    public Collection<VaultGroup> getUsedGroups() {
+        Set<UUID> usedGroups = new HashSet<>();
+        for (VaultEntry entry : getEntries()) {
+            usedGroups.addAll(entry.getGroups());
+        }
+
+        return getGroups().stream()
+                .filter(vg -> usedGroups.contains(vg.getUUID()))
+                .collect(Collectors.toList());
+    }
+
+    public boolean isGroupsMigrationFresh() {
+        return _vault.isGroupsMigrationFresh();
+    }
+
+    public boolean areIconsOptimized() {
+        return _vault.areIconsOptimized();
+    }
+
+    public void setIconsOptimized(boolean optimized) {
+        _vault.setIconsOptimized(optimized);
     }
 
     public VaultFileCredentials getCredentials() {
@@ -280,5 +359,9 @@ public class VaultRepository {
         }
 
         return getCredentials().getSlots().findBackupPasswordSlots().size() > 0;
+    }
+
+    public interface EntryEditor {
+        void edit(VaultEntry entry);
     }
 }

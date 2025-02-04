@@ -5,12 +5,15 @@ import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
-import android.preference.PreferenceManager;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.provider.DocumentsContractCompat;
+import androidx.preference.PreferenceManager;
 
 import com.beemdevelopment.aegis.util.JsonUtils;
 import com.beemdevelopment.aegis.util.TimeUtils;
+import com.beemdevelopment.aegis.vault.VaultBackupPermissionException;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -20,9 +23,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class Preferences {
@@ -31,10 +36,24 @@ public class Preferences {
     public static final int AUTO_LOCK_ON_MINIMIZE = 1 << 2;
     public static final int AUTO_LOCK_ON_DEVICE_LOCK = 1 << 3;
 
+    public static final int SEARCH_IN_ISSUER = 1 << 0;
+    public static final int SEARCH_IN_NAME = 1 << 1;
+    public static final int SEARCH_IN_NOTE = 1 << 2;
+    public static final int SEARCH_IN_GROUPS = 1 << 3;
+
+    public static final int BACKUPS_VERSIONS_INFINITE = -1;
+
     public static final int[] AUTO_LOCK_SETTINGS = {
             AUTO_LOCK_ON_BACK_BUTTON,
             AUTO_LOCK_ON_MINIMIZE,
             AUTO_LOCK_ON_DEVICE_LOCK
+    };
+
+    public static final int[] SEARCH_BEHAVIOR_SETTINGS = {
+            SEARCH_IN_ISSUER,
+            SEARCH_IN_NAME,
+            SEARCH_IN_NOTE,
+            SEARCH_IN_GROUPS
     };
 
     private SharedPreferences _prefs;
@@ -44,6 +63,22 @@ public class Preferences {
 
         if (getPasswordReminderTimestamp().getTime() == 0) {
             resetPasswordReminderTimestamp();
+        }
+
+        migratePreferences();
+    }
+
+    public void migratePreferences() {
+        // Change copy on tap to copy behavior to new preference and delete the old key
+        String prefCopyOnTapKey = "pref_copy_on_tap";
+        if (_prefs.contains(prefCopyOnTapKey)) {
+
+            boolean isCopyOnTapEnabled = _prefs.getBoolean(prefCopyOnTapKey, false);
+            if (isCopyOnTapEnabled) {
+                setCopyBehavior(CopyBehavior.SINGLETAP);
+            }
+
+            _prefs.edit().remove(prefCopyOnTapKey).apply();
         }
     }
 
@@ -114,18 +149,28 @@ public class Preferences {
         setPasswordReminderTimestamp(new Date().getTime());
     }
 
-    public boolean isAccountNameVisible() {
-        return _prefs.getBoolean("pref_account_name", true);
-    }
+    public boolean onlyShowNecessaryAccountNames() { return _prefs.getBoolean("pref_shared_issuer_account_name", false); }
 
     public boolean isIconVisible() {
         return _prefs.getBoolean("pref_show_icons", true);
+    }
+
+    public boolean getShowNextCode() {
+        return _prefs.getBoolean("pref_show_next_code", false);
+    }
+
+    public boolean getShowExpirationState() {
+        return _prefs.getBoolean("pref_expiration_state", true);
     }
 
     public CodeGrouping getCodeGroupSize() {
         String value = _prefs.getString("pref_code_group_size_string", "GROUPING_THREES");
 
         return CodeGrouping.valueOf(value);
+    }
+
+    public void setCodeGroupSize(CodeGrouping codeGroupSize) {
+        _prefs.edit().putString("pref_code_group_size_string", codeGroupSize.name()).apply();
     }
 
     public boolean isIntroDone() {
@@ -139,6 +184,20 @@ public class Preferences {
         }
 
         return _prefs.getInt("pref_auto_lock_mask", def);
+    }
+
+    public int getSearchBehaviorMask() {
+        final int def = SEARCH_IN_ISSUER | SEARCH_IN_NAME;
+
+        return _prefs.getInt("pref_search_behavior_mask", def);
+    }
+
+    public boolean isSearchBehaviorTypeEnabled(int searchBehaviorType) {
+        return (getSearchBehaviorMask() & searchBehaviorType) == searchBehaviorType;
+    }
+
+    public void setSearchBehaviorMask(int searchBehavior) {
+        _prefs.edit().putInt("pref_search_behavior_mask", searchBehavior).apply();
     }
 
     public boolean isAutoLockEnabled() {
@@ -181,12 +240,24 @@ public class Preferences {
         _prefs.edit().putInt("pref_current_theme", theme.ordinal()).apply();
     }
 
+    public boolean isDynamicColorsEnabled() {
+        return _prefs.getBoolean("pref_dynamic_colors", false);
+    }
+
     public ViewMode getCurrentViewMode() {
         return ViewMode.fromInteger(_prefs.getInt("pref_current_view_mode", 0));
     }
 
     public void setCurrentViewMode(ViewMode viewMode) {
         _prefs.edit().putInt("pref_current_view_mode", viewMode.ordinal()).apply();
+    }
+
+    public AccountNamePosition getAccountNamePosition() {
+        return AccountNamePosition.fromInteger(_prefs.getInt("pref_account_name_position", AccountNamePosition.END.ordinal()));
+    }
+
+    public void setAccountNamePosition(AccountNamePosition accountNamePosition) {
+        _prefs.edit().putInt("pref_account_name_position", accountNamePosition.ordinal()).apply();
     }
 
     public Integer getUsageCount(UUID uuid) {
@@ -202,8 +273,49 @@ public class Preferences {
         setUsageCount(usageCounts);
     }
 
+    public long getLastUsedTimestamp(UUID uuid) {
+        Map<UUID, Long> timestamps = getLastUsedTimestamps();
+        if (timestamps != null && timestamps.size() > 0){
+            Long timestamp = timestamps.get(uuid);
+            return timestamp != null ? timestamp : 0;
+        }
+
+        return 0;
+    }
+
     public void clearUsageCount() {
         _prefs.edit().remove("pref_usage_count").apply();
+    }
+
+    public Map<UUID, Long> getLastUsedTimestamps() {
+        Map<UUID, Long> lastUsedTimestamps = new HashMap<>();
+        String lastUsedTimestamp = _prefs.getString("pref_last_used_timestamps", "");
+        try {
+            JSONArray arr = new JSONArray(lastUsedTimestamp);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject json = arr.getJSONObject(i);
+                lastUsedTimestamps.put(UUID.fromString(json.getString("uuid")), json.getLong("timestamp"));
+            }
+        } catch (JSONException ignored) {
+        }
+
+        return lastUsedTimestamps;
+    }
+
+    public void setLastUsedTimestamps(Map<UUID, Long> lastUsedTimestamps) {
+        JSONArray lastUsedTimestampJson = new JSONArray();
+        for (Map.Entry<UUID, Long> entry : lastUsedTimestamps.entrySet()) {
+            JSONObject entryJson = new JSONObject();
+            try {
+                entryJson.put("uuid", entry.getKey());
+                entryJson.put("timestamp", entry.getValue());
+                lastUsedTimestampJson.put(entryJson);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+
+        _prefs.edit().putString("pref_last_used_timestamps", lastUsedTimestampJson.toString()).apply();
     }
 
     public Map<UUID, Integer> getUsageCounts() {
@@ -241,8 +353,16 @@ public class Preferences {
         return _prefs.getInt("pref_timeout", -1);
     }
 
+    public String getLanguage() {
+        return _prefs.getString("pref_lang", "system");
+    }
+
+    public void setLanguage(String lang) {
+        _prefs.edit().putString("pref_lang", lang).apply();
+    }
+
     public Locale getLocale() {
-        String lang = _prefs.getString("pref_lang", "system");
+        String lang = getLanguage();
 
         if (lang.equals("system")) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -444,34 +564,51 @@ public class Preferences {
         _prefs.edit().putBoolean("pref_warn_time_sync", enabled).apply();
     }
 
-    public boolean isCopyOnTapEnabled() {
-        return _prefs.getBoolean("pref_copy_on_tap", false);
+    public CopyBehavior getCopyBehavior() {
+        return CopyBehavior.fromInteger(_prefs.getInt("pref_current_copy_behavior", 0));
+    }
+
+    public void setCopyBehavior(CopyBehavior copyBehavior) {
+        _prefs.edit().putInt("pref_current_copy_behavior", copyBehavior.ordinal()).apply();
     }
 
     public boolean isMinimizeOnCopyEnabled() {
         return _prefs.getBoolean("pref_minimize_on_copy", false);
     }
 
-    public void setGroupFilter(List<String> groupFilter) {
+    public void setGroupFilter(Set<UUID> groupFilter) {
         JSONArray json = new JSONArray(groupFilter);
-        _prefs.edit().putString("pref_group_filter", json.toString()).apply();
+        _prefs.edit().putString("pref_group_filter_uuids", json.toString()).apply();
     }
 
-    public List<String> getGroupFilter() {
-        String raw = _prefs.getString("pref_group_filter", null);
+    public Set<UUID> getGroupFilter() {
+        String raw = _prefs.getString("pref_group_filter_uuids", null);
         if (raw == null || raw.isEmpty()) {
-            return Collections.emptyList();
+            return Collections.emptySet();
         }
 
         try {
             JSONArray json = new JSONArray(raw);
-            List<String> filter = new ArrayList<>();
+            Set<UUID> filter = new HashSet<>();
             for (int i = 0; i < json.length(); i++) {
-                filter.add(json.isNull(i) ? null : json.optString(i));
+                filter.add(json.isNull(i) ? null : UUID.fromString(json.getString(i)));
             }
             return filter;
         } catch (JSONException e) {
-            return Collections.emptyList();
+            return Collections.emptySet();
+        }
+    }
+
+    @NonNull
+    public BackupsVersioningStrategy getBackupVersioningStrategy() {
+        Uri uri = getBackupsLocation();
+        if (uri == null) {
+            return BackupsVersioningStrategy.UNDEFINED;
+        }
+        if (DocumentsContractCompat.isTreeUri(uri)) {
+            return BackupsVersioningStrategy.MULTIPLE_BACKUPS;
+        } else {
+            return BackupsVersioningStrategy.SINGLE_BACKUP;
         }
     }
 
@@ -479,14 +616,16 @@ public class Preferences {
         private final Date _time;
         private boolean _isBuiltIn;
         private final String _error;
+        private final boolean _isPermissionError;
 
         public BackupResult(@Nullable Exception e) {
-            this(new Date(), e == null ? null : e.toString());
+            this(new Date(), e == null ? null : e.toString(), e instanceof VaultBackupPermissionException);
         }
 
-        private BackupResult(Date time, @Nullable String error) {
+        private BackupResult(Date time, @Nullable String error, boolean isPermissionError) {
             _time = time;
             _error = error;
+            _isPermissionError = isPermissionError;
         }
 
         @Nullable
@@ -514,12 +653,17 @@ public class Preferences {
             _isBuiltIn = isBuiltIn;
         }
 
+        public boolean isPermissionError() {
+            return _isPermissionError;
+        }
+
         public String toJson() {
             JSONObject obj = new JSONObject();
 
             try {
                 obj.put("time", _time.getTime());
                 obj.put("error", _error == null ? JSONObject.NULL : _error);
+                obj.put("isPermissionError", _isPermissionError);
             } catch (JSONException e) {
                 throw new RuntimeException(e);
             }
@@ -531,7 +675,8 @@ public class Preferences {
             JSONObject obj = new JSONObject(json);
             long time = obj.getLong("time");
             String error = JsonUtils.optString(obj, "error");
-            return new BackupResult(new Date(time), error);
+            boolean isPermissionError = obj.optBoolean("isPermissionError");
+            return new BackupResult(new Date(time), error, isPermissionError);
         }
     }
 

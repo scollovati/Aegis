@@ -4,17 +4,19 @@ import android.content.Context;
 
 import com.beemdevelopment.aegis.R;
 import com.beemdevelopment.aegis.crypto.CryptoUtils;
-import com.beemdevelopment.aegis.encoding.Base32;
 import com.beemdevelopment.aegis.encoding.Base64;
 import com.beemdevelopment.aegis.encoding.EncodingException;
+import com.beemdevelopment.aegis.otp.GoogleAuthInfo;
 import com.beemdevelopment.aegis.otp.HotpInfo;
 import com.beemdevelopment.aegis.otp.OtpInfo;
 import com.beemdevelopment.aegis.otp.OtpInfoException;
+import com.beemdevelopment.aegis.otp.SteamInfo;
 import com.beemdevelopment.aegis.otp.TotpInfo;
 import com.beemdevelopment.aegis.ui.dialogs.Dialogs;
 import com.beemdevelopment.aegis.util.IOUtils;
 import com.beemdevelopment.aegis.util.JsonUtils;
 import com.beemdevelopment.aegis.vault.VaultEntry;
+import com.google.common.base.Strings;
 import com.topjohnwu.superuser.io.SuFile;
 
 import org.json.JSONArray;
@@ -60,7 +62,7 @@ public class TwoFASImporter extends DatabaseImporter {
             String json = new String(IOUtils.readAll(stream), StandardCharsets.UTF_8);
             JSONObject obj = new JSONObject(json);
             int version = obj.getInt("schemaVersion");
-            if (version > 3) {
+            if (version > 4) {
                 throw new DatabaseImporterException(String.format("Unsupported schema version: %d", version));
             }
 
@@ -172,9 +174,12 @@ public class TwoFASImporter extends DatabaseImporter {
 
         private static VaultEntry convertEntry(JSONObject obj) throws DatabaseImporterEntryException {
             try {
-                byte[] secret = Base32.decode(obj.getString("secret"));
+                byte[] secret = GoogleAuthInfo.parseSecret(obj.getString("secret"));
                 JSONObject info = obj.getJSONObject("otp");
-                String issuer = info.optString("issuer");
+                String issuer = obj.optString("name");
+                if (Strings.isNullOrEmpty(issuer)) {
+                    issuer = info.optString("issuer");
+                }
                 String name = info.optString("account");
                 int digits = info.optInt("digits", TotpInfo.DEFAULT_DIGITS);
                 String algorithm = info.optString("algorithm", TotpInfo.DEFAULT_ALGORITHM);
@@ -187,6 +192,9 @@ public class TwoFASImporter extends DatabaseImporter {
                 } else if (tokenType.equals("HOTP")) {
                     long counter = info.optLong("counter", 0);
                     otp = new HotpInfo(secret, algorithm, digits, counter);
+                } else if (tokenType.equals("STEAM")) {
+                    int period = info.optInt("period", TotpInfo.DEFAULT_PERIOD);
+                    otp = new SteamInfo(secret, algorithm, digits, period);
                 } else {
                     throw new DatabaseImporterEntryException(String.format("Unrecognized tokenType: %s", tokenType), obj.toString());
                 }

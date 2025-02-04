@@ -16,6 +16,7 @@ public class SimpleItemTouchHelperCallback extends ItemTouchHelper.Callback {
     private final EntryAdapter _adapter;
     private boolean _positionChanged = false;
     private boolean _isLongPressDragEnabled = true;
+    private int _dragFlags = ItemTouchHelper.UP | ItemTouchHelper.DOWN;
 
     public SimpleItemTouchHelperCallback(EntryAdapter adapter) {
         _adapter = adapter;
@@ -46,43 +47,55 @@ public class SimpleItemTouchHelperCallback extends ItemTouchHelper.Callback {
         return false;
     }
 
+    public void setDragFlags(int dragFlags) {
+        _dragFlags = dragFlags;
+    }
+
     @Override
     public int getMovementFlags(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder viewHolder) {
         // It's not clear when this can happen, but sometimes the ViewHolder
         // that's passed to this function has a position of -1, leading
         // to a crash down the line.
-        int position = viewHolder.getAdapterPosition();
+        int position = viewHolder.getBindingAdapterPosition();
         if (position == NO_POSITION) {
             return 0;
         }
 
-        int swipeFlags = 0;
-        int dragFlags = ItemTouchHelper.UP | ItemTouchHelper.DOWN;
-
         EntryAdapter adapter = (EntryAdapter) recyclerView.getAdapter();
-        if (adapter.isPositionFooter(position)
-                || adapter.getEntryAt(position) != _selectedEntry
-                || !isLongPressDragEnabled()) {
-            dragFlags = 0;
+        if (adapter == null) {
+            return 0;
         }
 
-        return makeMovementFlags(dragFlags, swipeFlags);
+        int swipeFlags = 0;
+        if (adapter.isPositionFooter(position)
+                || adapter.isPositionErrorCard(position)
+                || adapter.getEntryAtPosition(position) != _selectedEntry
+                || !isLongPressDragEnabled()) {
+            return makeMovementFlags(0, swipeFlags);
+        }
+
+        return makeMovementFlags(_dragFlags, swipeFlags);
     }
 
     @Override
     public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder,
                           RecyclerView.ViewHolder target) {
-        if (target.getAdapterPosition() < _adapter.getShownFavoritesCount()){
+        int targetIndex = _adapter.translateEntryPosToIndex(target.getBindingAdapterPosition());
+        if (targetIndex < _adapter.getShownFavoritesCount()) {
             return false;
         }
-        _adapter.onItemMove(viewHolder.getAdapterPosition(), target.getAdapterPosition());
+
+        int firstPosition = viewHolder.getLayoutPosition();
+        int secondPosition = target.getBindingAdapterPosition();
+
+        _adapter.onItemMove(firstPosition, secondPosition);
         _positionChanged = true;
         return true;
     }
 
     @Override
     public void onSwiped(RecyclerView.ViewHolder viewHolder, int direction) {
-        _adapter.onItemDismiss(viewHolder.getAdapterPosition());
+        _adapter.onItemDismiss(viewHolder.getBindingAdapterPosition());
     }
 
     @Override
@@ -90,8 +103,9 @@ public class SimpleItemTouchHelperCallback extends ItemTouchHelper.Callback {
         super.clearView(recyclerView, viewHolder);
 
         if (_positionChanged) {
-            _adapter.onItemDrop(viewHolder.getAdapterPosition());
+            _adapter.onItemDrop(viewHolder.getBindingAdapterPosition());
             _positionChanged = false;
+            _adapter.refresh(false);
         }
     }
 }

@@ -1,11 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string-array name="authentication_methods">
-        <item>@string/authentication_method_none</item>
-        <item>@string/authentication_method_password</item>
-        <item>@string/authentication_method_biometrics</item>
-    </string-array>
-
     <string-array name="otp_types_array">
         <item>TOTP</item>
         <item>HOTP</item>
@@ -32,6 +26,7 @@
         <item>@string/normal_viewmode_title</item>
         <item>@string/compact_mode_title</item>
         <item>@string/small_mode_title</item>
+        <item>@string/tiles_mode_title</item>
     </string-array>
 
     <string-array name="pref_lang_entries">
@@ -46,6 +41,7 @@
         <item>Czech</item>
         <item>Danish</item>
         <item>Dutch</item>
+        <item>Dutch (Frysian)</item>
         <item>English</item>
         <item>Finnish</item>
         <item>French</item>
@@ -86,6 +82,7 @@
         <item>cs</item>
         <item>da</item>
         <item>nl</item>
+        <item>fy_NL</item>
         <item>en</item>
         <item>fi</item>
         <item>fr</item>
@@ -128,6 +125,13 @@
         <item>@string/pref_auto_lock_type_device_lock</item>
     </string-array>
 
+    <string-array name="pref_search_behavior_types">
+        <item>@string/pref_search_behavior_type_issuer</item>
+        <item>@string/pref_search_behavior_type_name</item>
+        <item>@string/pref_search_behavior_type_note</item>
+        <item>@string/pref_search_behavior_type_groups</item>
+    </string-array>
+
     <string-array name="export_formats">
         <item>@string/export_format_aegis</item>
         <item>@string/export_format_html</item>
@@ -148,5 +152,17 @@
         <item>GROUPING_TWOS</item>
         <item>GROUPING_THREES</item>
         <item>GROUPING_FOURS</item>
+    </string-array>
+
+    <string-array name="account_name_position_titles">
+        <item>@string/pref_account_name_position_hidden</item>
+        <item>@string/pref_account_name_position_end</item>
+        <item>@string/pref_account_name_position_below</item>
+    </string-array>
+
+    <string-array name="copy_behavior_titles">
+        <item>@string/pref_copy_behavior_never</item>
+        <item>@string/pref_copy_behavior_single_tap</item>
+        <item>@string/pref_copy_behavior_double_tap</item>
     </string-array>
 </resources>

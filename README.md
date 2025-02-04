@@ -7,7 +7,7 @@ alt="App icon">
 
 [![Build](https://github.com/beemdevelopment/Aegis/actions/workflows/build-app-workflow.yaml/badge.svg)](https://github.com/beemdevelopment/Aegis/actions/workflows/build-app-workflow.yaml?query=branch%3Amaster) [![Crowdin](https://badges.crowdin.net/aegis-authenticator/localized.svg)](https://crowdin.com/project/aegis-authenticator) [![Donate](https://img.shields.io/badge/donate-buy%20us%20a%20beer-%23FF813F)](https://www.buymeacoffee.com/beemdevelopment) [![Matrix](https://img.shields.io/matrix/aegis:matrix.org?color=blue)](https://matrix.to/#/#aegis:matrix.org)
 
-__Aegis Authenticator__ is a free, secure and open source 2FA app for Android.
+**Aegis Authenticator** is a free, secure and open source 2FA app for Android.
 It aims to provide a secure authenticator for your online services, while also
 including some features missing in existing authenticator apps, like proper
 encryption and backups. Aegis supports HOTP and TOTP, making it compatible with
@@ -53,19 +53,20 @@ The security design of the app and the vault format is described in detail in
 [<img width=200 alt="Screenshot 1"
 src="metadata/en-US/images/phoneScreenshots/screenshot1.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot1.png?raw=true)
 [<img width=200 alt="Screenshot 2"
-src="metadata/en-US/images/phoneScreenshots/screenshot2.png?raw=true">](/metadata/en-US/images/phoneScreenshots/screenshot2.png?raw=true)
+src="metadata/en-US/images/phoneScreenshots/screenshot2.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot2.png?raw=true)
 [<img width=200 alt="Screenshot 3"
-src="metadata/en-US/images/phoneScreenshots/screenshot3.png?raw=true">](/metadata/en-US/images/phoneScreenshots/screenshot3.png?raw=true)
-
+src="metadata/en-US/images/phoneScreenshots/screenshot3.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot3.png?raw=true)
 [<img width=200 alt="Screenshot 4"
 src="metadata/en-US/images/phoneScreenshots/screenshot4.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot4.png?raw=true)
+
 [<img width=200 alt="Screenshot 5"
 src="metadata/en-US/images/phoneScreenshots/screenshot5.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot5.png?raw=true)
 [<img width=200 alt="Screenshot 6"
 src="metadata/en-US/images/phoneScreenshots/screenshot6.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot6.png?raw=true)
-
 [<img width=200 alt="Screenshot 7"
 src="metadata/en-US/images/phoneScreenshots/screenshot7.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot7.png?raw=true)
+[<img width=200 alt="Screenshot 8"
+src="metadata/en-US/images/phoneScreenshots/screenshot8.png?raw=true">](metadata/en-US/images/phoneScreenshots/screenshot8.png?raw=true)
 
 ## Downloads
 
@@ -77,7 +78,7 @@ src="https://play.google.com/intl/en_us/badges/images/generic/en-play-badge.png"
 [<img height="80" alt="Get it on F-Droid"
 src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
 />](https://f-droid.org/app/com.beemdevelopment.aegis)
-      
+
 ### Verification
 
 APK releases on Google Play and GitHub are signed using the same key. They can
@@ -124,10 +125,20 @@ documentation](docs/iconpacks.md).
   [<img width=500 alt="aegis-icons preview"
   src="https://raw.githubusercontent.com/aegis-icons/aegis-icons/master/showcase.png">](https://github.com/aegis-icons/aegis-icons)
 
-- [aegis-simple-icons](https://github.com/alexbakker/aegis-simple-icons)
+- [delta-aegis-icons](https://github.com/Delta-Icons/aegis-icons)
+
+  Delta version of the unofficial monochrome-styled 2FA icon pack aegis-icons.
+
+- [aegis-simple-icons](https://github.com/alexbakker/aegis-simple-icons) *
 
   This project periodically generates an icon pack for Aegis based on [Simple
-  Icons](https://simpleicons.org/). The icons are automatically generated, so
+  Icons](https://simpleicons.org/).
+
+- [aegis-simple-icons-outlined](https://github.com/michaelschattgen/aegis-simple-icons-outlined) *
+
+  This is a variant on the aegis-simple-icons pack where the icons contain no solid background and just the outlines are being used.
+ 
+\* The icons are automatically generated, so
   not all of them are as high quality as the ones you'll find in
   [aegis-icons](https://github.com/aegis-icons/aegis-icons).
 
@@ -144,3 +155,8 @@ Swing by our Matrix room to interact with other contributors:
 
 This project is licensed under the GNU General Public License v3.0. See the
 [LICENSE](LICENSE) file for details.
+
+A couple of libraries vendored in Aegis' repository are licensed under a
+different license:
+- [TextDrawable](app/src/main/java/com/amulyakhare/textdrawable)
+- [TrustedIntents](app/src/main/java/info/guardianproject/trustedintents)

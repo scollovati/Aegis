@@ -1,43 +1,62 @@
 package com.beemdevelopment.aegis.ui;
 
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
-import androidx.appcompat.app.AlertDialog;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.beemdevelopment.aegis.R;
+import com.beemdevelopment.aegis.helpers.BitmapHelper;
 import com.beemdevelopment.aegis.helpers.FabScrollHelper;
+import com.beemdevelopment.aegis.helpers.ViewHelper;
+import com.beemdevelopment.aegis.icons.IconType;
 import com.beemdevelopment.aegis.importers.DatabaseImporter;
 import com.beemdevelopment.aegis.importers.DatabaseImporterEntryException;
 import com.beemdevelopment.aegis.importers.DatabaseImporterException;
 import com.beemdevelopment.aegis.ui.dialogs.Dialogs;
 import com.beemdevelopment.aegis.ui.models.ImportEntry;
+import com.beemdevelopment.aegis.ui.tasks.IconOptimizationTask;
 import com.beemdevelopment.aegis.ui.tasks.RootShellTask;
 import com.beemdevelopment.aegis.ui.views.ImportEntriesAdapter;
 import com.beemdevelopment.aegis.util.UUIDMap;
 import com.beemdevelopment.aegis.vault.VaultEntry;
+import com.beemdevelopment.aegis.vault.VaultEntryIcon;
+import com.beemdevelopment.aegis.vault.VaultGroup;
 import com.beemdevelopment.aegis.vault.VaultRepository;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.snackbar.Snackbar;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class ImportEntriesActivity extends AegisActivity {
+    private View _view;
     private Menu _menu;
+    private RecyclerView _entriesView;
     private ImportEntriesAdapter _adapter;
     private FabScrollHelper _fabScrollHelper;
+
+    private UUIDMap<VaultGroup> _importedGroups;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -47,14 +66,17 @@ public class ImportEntriesActivity extends AegisActivity {
         }
         setContentView(R.layout.activity_import_entries);
         setSupportActionBar(findViewById(R.id.toolbar));
+        ViewHelper.setupAppBarInsets(findViewById(R.id.app_bar_layout));
+
+        _view = findViewById(R.id.importEntriesRootView);
 
         ActionBar bar = getSupportActionBar();
-        bar.setHomeAsUpIndicator(R.drawable.ic_close);
+        bar.setHomeAsUpIndicator(R.drawable.ic_outline_close_24);
         bar.setDisplayHomeAsUpEnabled(true);
 
         _adapter = new ImportEntriesAdapter();
-        RecyclerView entriesView = findViewById(R.id.list_entries);
-        entriesView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+        _entriesView = findViewById(R.id.list_entries);
+        _entriesView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
                 super.onScrolled(recyclerView, dx, dy);
@@ -63,9 +85,9 @@ public class ImportEntriesActivity extends AegisActivity {
         });
 
         LinearLayoutManager layoutManager = new LinearLayoutManager(this);
-        entriesView.setLayoutManager(layoutManager);
-        entriesView.setAdapter(_adapter);
-        entriesView.setNestedScrollingEnabled(false);
+        _entriesView.setLayoutManager(layoutManager);
+        _entriesView.setAdapter(_adapter);
+        _entriesView.setNestedScrollingEnabled(false);
 
         FloatingActionButton fab = findViewById(R.id.fab);
         fab.setOnClickListener(v -> {
@@ -88,10 +110,11 @@ public class ImportEntriesActivity extends AegisActivity {
             if (importer.isInstalledAppVersionSupported()) {
                 startImportApp(importer);
             } else {
-                Dialogs.showSecureDialog(new AlertDialog.Builder(this)
+                Dialogs.showSecureDialog(new MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_Aegis_AlertDialog_Warning)
                         .setTitle(R.string.warning)
                         .setMessage(getString(R.string.app_version_error, importerDef.getName()))
                         .setCancelable(false)
+                        .setIconAttribute(android.R.attr.alertDialogIcon)
                         .setPositiveButton(R.string.yes, (dialog1, which) -> {
                             startImportApp(importer);
                         })
@@ -156,7 +179,7 @@ public class ImportEntriesActivity extends AegisActivity {
                 state.decrypt(this, new DatabaseImporter.DecryptListener() {
                     @Override
                     public void onStateDecrypted(DatabaseImporter.State state) {
-                        importDatabase(state);
+                        processDecryptedImporterState(state);
                     }
 
                     @Override
@@ -171,7 +194,7 @@ public class ImportEntriesActivity extends AegisActivity {
                     }
                 });
             } else {
-                importDatabase(state);
+                processDecryptedImporterState(state);
             }
         } catch (DatabaseImporterException e) {
             e.printStackTrace();
@@ -179,7 +202,7 @@ public class ImportEntriesActivity extends AegisActivity {
         }
     }
 
-    private void importDatabase(DatabaseImporter.State state) {
+    private void processDecryptedImporterState(DatabaseImporter.State state) {
         DatabaseImporter.Result result;
         try {
             result = state.convert();
@@ -189,16 +212,43 @@ public class ImportEntriesActivity extends AegisActivity {
             return;
         }
 
-        UUIDMap<VaultEntry> entries = result.getEntries();
-        for (VaultEntry entry : entries.getValues()) {
-            _adapter.addEntry(new ImportEntry(entry));
+        Map<UUID, VaultEntryIcon> icons = result.getEntries().getValues().stream()
+                .filter(e -> e.getIcon() != null
+                        && !e.getIcon().getType().equals(IconType.SVG)
+                        && !BitmapHelper.isVaultEntryIconOptimized(e.getIcon()))
+                .collect(Collectors.toMap(VaultEntry::getUUID, VaultEntry::getIcon));
+        if (!icons.isEmpty()) {
+            IconOptimizationTask task = new IconOptimizationTask(this, newIcons -> {
+                for (Map.Entry<UUID, VaultEntryIcon> mapEntry : newIcons.entrySet()) {
+                    VaultEntry entry = result.getEntries().getByUUID(mapEntry.getKey());
+                    entry.setIcon(mapEntry.getValue());
+                }
+
+                processImporterResult(result);
+            });
+            task.execute(getLifecycle(), icons);
+        } else {
+            processImporterResult(result);
         }
+    }
+
+    private void processImporterResult(DatabaseImporter.Result result) {
+        List<ImportEntry> importEntries = new ArrayList<>();
+        for (VaultEntry entry : result.getEntries().getValues()) {
+            ImportEntry importEntry = new ImportEntry(entry);
+            _adapter.addEntry(importEntry);
+            importEntries.add(importEntry);
+        }
+
+        _importedGroups = result.getGroups();
 
         List<DatabaseImporterEntryException> errors = result.getErrors();
         if (errors.size() > 0) {
             String message = getResources().getQuantityString(R.plurals.import_error_dialog, errors.size(), errors.size());
-            Dialogs.showMultiErrorDialog(this, R.string.import_error_title, message, errors, null);
+            Dialogs.showMultiExceptionDialog(this, R.string.import_error_title, message, errors, null);
         }
+
+        findDuplicates(importEntries);
     }
 
     private void showWipeEntriesDialog() {
@@ -212,10 +262,43 @@ public class ImportEntriesActivity extends AegisActivity {
     private void saveAndFinish(boolean wipeEntries) {
         VaultRepository vault = _vaultManager.getVault();
         if (wipeEntries) {
-            vault.wipeEntries();
+            vault.wipeContents();
         }
 
+        // Given the list of selected entries, collect the UUID's of all groups
+        // that we're actually going to import
         List<ImportEntry> selectedEntries = _adapter.getCheckedEntries();
+        List<UUID> selectedGroupUuids = new ArrayList<>();
+        for (ImportEntry entry : selectedEntries) {
+            selectedGroupUuids.addAll(entry.getEntry().getGroups());
+        }
+
+        // Add all of the new groups to the vault. If a group with the same name already
+        // exists in the vault, rewrite all entries in that group to reference the existing group.
+        for (VaultGroup importedGroup : _importedGroups) {
+            if (!selectedGroupUuids.contains(importedGroup.getUUID())) {
+                continue;
+            }
+
+            VaultGroup existingGroup = vault.findGroupByUUID(importedGroup.getUUID());
+            if (existingGroup != null) {
+                continue;
+            }
+
+            existingGroup = vault.findGroupByName(importedGroup.getName());
+            if (existingGroup == null) {
+                vault.addGroup(importedGroup);
+            } else {
+                for (ImportEntry entry : selectedEntries) {
+                    Set<UUID> entryGroups = entry.getEntry().getGroups();
+                    if (entryGroups.contains(importedGroup.getUUID())) {
+                        entryGroups.remove(importedGroup.getUUID());
+                        entryGroups.add(existingGroup.getUUID());
+                    }
+                }
+            }
+        }
+
         for (ImportEntry selectedEntry : selectedEntries) {
             VaultEntry entry = selectedEntry.getEntry();
 
@@ -231,9 +314,83 @@ public class ImportEntriesActivity extends AegisActivity {
             String toastMessage = getResources().getQuantityString(R.plurals.imported_entries_count, selectedEntries.size(), selectedEntries.size());
             Toast.makeText(this, toastMessage, Toast.LENGTH_SHORT).show();
 
+
             setResult(RESULT_OK, null);
-            finish();
+
+            if (_iconPackManager.hasIconPack()) {
+                ArrayList<UUID> assignIconEntriesIds = new ArrayList<>();
+                Intent assignIconIntent = new Intent(getBaseContext(), AssignIconsActivity.class);
+                for (ImportEntry entry : selectedEntries) {
+                    assignIconEntriesIds.add(entry.getEntry().getUUID());
+                }
+
+                assignIconIntent.putExtra("entries", assignIconEntriesIds);
+
+                Dialogs.showSecureDialog(new MaterialAlertDialogBuilder(this)
+                        .setTitle(R.string.import_assign_icons_dialog_title)
+                        .setMessage(R.string.import_assign_icons_dialog_text)
+                        .setPositiveButton(android.R.string.yes, (dialog, which) -> {
+                            startActivity(assignIconIntent);
+                            finish();
+                        })
+                        .setNegativeButton(android.R.string.no, ((dialogInterface, i) -> finish()))
+                        .create());
+            } else {
+                finish();
+            }
         }
+    }
+
+    private void findDuplicates(List<ImportEntry> importEntries) {
+        List<UUID> duplicateEntries = new ArrayList<>();
+        for (ImportEntry importEntry: importEntries) {
+            boolean exists = _vaultManager.getVault().getEntries().stream().anyMatch(item ->
+                    item.getIssuer().equals(importEntry.getEntry().getIssuer()) &&
+                    Arrays.equals(item.getInfo().getSecret(), importEntry.getEntry().getInfo().getSecret()));
+
+            if (exists) {
+                duplicateEntries.add(importEntry.getEntry().getUUID());
+            }
+        }
+
+        if (duplicateEntries.size() == 0) {
+            return;
+        }
+
+        _adapter.setCheckboxStates(duplicateEntries, false);
+        Snackbar snackbar = Snackbar.make(_view, getResources().getQuantityString(R.plurals.import_duplicate_toast, duplicateEntries.size(), duplicateEntries.size()), Snackbar.LENGTH_INDEFINITE);
+        snackbar.addCallback(new Snackbar.Callback() {
+            @Override
+            public void onShown(Snackbar sb) {
+                int snackbarHeight = sb.getView().getHeight();
+
+                _entriesView.setPadding(
+                        _entriesView.getPaddingLeft(),
+                        _entriesView.getPaddingTop(),
+                        _entriesView.getPaddingRight(),
+                        _entriesView.getPaddingBottom() + snackbarHeight * 2
+                );
+            }
+
+            @Override
+            public void onDismissed(Snackbar sb, int event) {
+                int snackbarHeight = sb.getView().getHeight();
+
+                _entriesView.setPadding(
+                        _entriesView.getPaddingLeft(),
+                        _entriesView.getPaddingTop(),
+                        _entriesView.getPaddingRight(),
+                        _entriesView.getPaddingBottom() - snackbarHeight * 2
+                );
+            }
+        });
+        snackbar.setAction(R.string.undo, new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                _adapter.setCheckboxStates(duplicateEntries, true);
+            }
+        });
+        snackbar.show();
     }
 
     @Override
@@ -245,18 +402,15 @@ public class ImportEntriesActivity extends AegisActivity {
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case android.R.id.home:
-                finish();
-                break;
-            case R.id.toggle_checkboxes:
-                _adapter.toggleCheckboxes();
-                break;
-            case R.id.toggle_wipe_vault:
-                item.setChecked(!item.isChecked());
-                break;
-            default:
-                return super.onOptionsItemSelected(item);
+        int itemId = item.getItemId();
+        if (itemId == android.R.id.home) {
+            finish();
+        } else if (itemId == R.id.toggle_checkboxes) {
+            _adapter.toggleCheckboxes();
+        } else if (itemId == R.id.toggle_wipe_vault) {
+            item.setChecked(!item.isChecked());
+        } else {
+            return super.onOptionsItemSelected(item);
         }
 
         return true;
